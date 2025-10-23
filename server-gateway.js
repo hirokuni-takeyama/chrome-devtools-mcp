@@ -2,7 +2,6 @@
 // 最小のHTTP⇄stdioブリッジ。SSEは心拍のみ、/messagesは子プロセス(MCP:stdio)へJSON-RPCをフォワード。
 
 import express from 'express';
-import cors from 'cors';
 import { spawn } from 'child_process';
 
 const ORIGIN = process.env.CORS_ORIGIN || 'https://dify.edomtt.co.jp';
@@ -12,16 +11,13 @@ const CHILD_ARGS = (process.env.MCP_ARGS && process.env.MCP_ARGS.split(' ')) || 
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
-app.use(cors({
-  origin: ORIGIN,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id', 'MCP-Protocol-Version'],
-  credentials: false,
-  maxAge: 86400
-}));
 app.use((req, res, next) => {
-  // Dify のブラウザ経由テストで必要
-  res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id, mcp-protocol-version');
+  const origin = ORIGIN;
+  res.header('Access-Control-Allow-Origin', origin);
+  res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version');
+  res.header('Access-Control-Expose-Headers', 'mcp-session-id, mcp-protocol-version');
+  if (req.method === 'OPTIONS') return res.status(204).end();
   next();
 });
 
@@ -121,7 +117,6 @@ app.post('/messages', messagesHandler);
 // --- MCP Discovery: Dify が参照する可能性大 ---
 app.get('/.well-known/mcp.json', (_req, res) => {
   res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id, mcp-protocol-version');
   res.status(200).json({
     name: 'chrome-devtools-mcp gateway',
     version: '0.8.1',
@@ -138,8 +133,10 @@ app.get('/mcp', (req, res) => {
 });
 app.post('/mcp', (req, res) => messagesHandler(req, res));
 
-// ルート
-app.get('/', (_req, res) => res.json({ service: 'chrome-devtools-mcp gateway', ok: true }));
+// ルート（Discovery へリダイレクト）
+app.get('/', (_req, res) => {
+  res.redirect(308, '/.well-known/mcp.json');
+});
 
 // 末尾に追加：未定義ルートを捕捉（デバッグ用）
 app.use((req, res, _next) => {
