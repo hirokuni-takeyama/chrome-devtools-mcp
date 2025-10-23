@@ -27,4 +27,4 @@ RUN chmod +x /app/start.sh
 
 ENV PORT=8080
 EXPOSE 8080
-CMD ["node", "server-gateway.js"]
+CMD ["bash", "start.sh"]
