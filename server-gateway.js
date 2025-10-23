@@ -183,26 +183,31 @@ app.get('/mcp', (req, res) => {
 });
 app.post('/mcp', (req, res) => messagesHandler(req, res));
 
-// ルート（Discovery へリダイレクト）
+// ベースURL: text/plain で「SSEの絶対URL」を返す（最も確実）
 app.get('/', (req, res) => {
   const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString();
   const host = (req.headers['x-forwarded-host'] || req.headers.host || '').toString();
   const base = `${proto}://${host}`;
-  const sse = `${base}/sse`;
-  const msgs = `${base}/messages`;
-  const single = `${base}/mcp`;
+  const sse = `${base}/mcp/sse`;
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).send(sse + '\n');
+});
+
+// JSON 表現でのエンドポイント提示
+app.get('/endpoint', (req, res) => {
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString();
+  const host = (req.headers['x-forwarded-host'] || req.headers.host || '').toString();
+  const base = `${proto}://${host}`;
+  const sse = `${base}/mcp/sse`;
+  const msgs = `${base}/mcp/messages`;
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'no-store');
-  res.json({
-    name: 'chrome-devtools-mcp gateway',
-    version: '0.8.1',
-    protocolVersion: '2025-06-18',
-    transport: 'http+sse',
-    endpointUrl: single,
+  res.status(200).json({
+    endpointUrl: sse,
     sseUrl: sse,
     messagesUrl: msgs,
-    endpoints: { sse: '/sse', messages: '/messages', single: '/mcp' },
-    routes: { sse, messages: msgs, single }
+    endpoints: { sse, messages: msgs, single: `${base}/mcp` }
   });
 });
 
