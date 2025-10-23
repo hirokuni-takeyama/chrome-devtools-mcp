@@ -169,7 +169,25 @@ async function messagesHandler(req, res) {
   }
 
   if (method === 'tools/list') {
-    return res.status(200).json({ jsonrpc: '2.0', id, result: { tools: [] } });
+    return res.status(200).json({
+      jsonrpc: '2.0',
+      id,
+      result: {
+        tools: [
+          {
+            name: 'openTab',
+            description: 'Open a URL in Chrome DevTools-controlled browser.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                url: { type: 'string', description: 'URL to open' }
+              },
+              required: ['url']
+            }
+          }
+        ]
+      }
+    });
   }
 
   if (method === 'resources/list') {
@@ -181,10 +199,18 @@ async function messagesHandler(req, res) {
   }
 
   if (method === 'tools/call') {
+    const { name, arguments: args } = body.params || {};
+    if (name === 'openTab') {
+      return res.status(200).json({
+        jsonrpc: '2.0',
+        id,
+        result: { ok: true, echo: { name, args } }
+      });
+    }
     return res.status(200).json({
       jsonrpc: '2.0',
       id,
-      error: { code: -32601, message: 'tools/call is not implemented' }
+      error: { code: -32601, message: `Unknown tool: ${name}` }
     });
   }
 
