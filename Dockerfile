@@ -1,4 +1,4 @@
-FROM node:20-bullseye
+FROM node:20-bookworm
 
 # Chrome と依存
 RUN apt-get update && apt-get install -y wget gnupg ca-certificates \
