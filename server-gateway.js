@@ -115,21 +115,65 @@ app.post('/mcp/messages', messagesHandler);
 app.post('/messages', messagesHandler);
 
 // --- MCP Discovery: Dify が参照する可能性大 ---
-app.get('/.well-known/mcp.json', (_req, res) => {
+app.get('/.well-known/mcp.json', (req, res) => {
   res.setHeader('Content-Type', 'application/json');
-  res.status(200).json({
+  // ベースURLを組み立て（Cloud Run: x-forwarded-proto/host を優先）
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString();
+  const host = (req.headers['x-forwarded-host'] || req.headers.host || '').toString();
+  const base = `${proto}://${host}`;
+
+  const payload = {
     name: 'chrome-devtools-mcp gateway',
     version: '0.8.1',
+    // 互換のため冗長に複数の表現を併記（相手実装に合わせてどれか拾われる）
     transport: 'http+sse',
-    endpoints: { sse: '/mcp/sse', messages: '/mcp/messages' }
-  });
+    protocolVersion: '2025-06-18',
+    // 旧来表現
+    endpoints: {
+      sse: '/mcp/sse',
+      messages: '/mcp/messages',
+      single: '/mcp'
+    },
+    // 絶対URL（これを見れば確実に叩ける）
+    routes: {
+      sse: `${base}/mcp/sse`,
+      messages: `${base}/mcp/messages`,
+      single: `${base}/mcp`
+    },
+    // 配列形式（将来/他実装向け）
+    protocols: [
+      {
+        type: 'http+sse',
+        protocolVersion: '2025-06-18',
+        baseUrl: `${base}`,
+        endpoints: {
+          sse: `${base}/mcp/sse`,
+          messages: `${base}/mcp/messages`,
+          single: `${base}/mcp`
+        }
+      }
+    ]
+  };
+
+  res.status(200).json(payload);
 });
 
 // --- /mcp 単一エンドポイント（GET=JSON or SSE, POST=JSON-RPC）---
 app.get('/mcp', (req, res) => {
   const accept = String(req.headers['accept'] || '');
   if (accept.includes('text/event-stream')) return sseHandler(req, res);
-  res.json({ ok: true, protocol: 'http+sse', endpoints: { sse: '/mcp/sse', messages: '/mcp/messages' } });
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString();
+  const host = (req.headers['x-forwarded-host'] || req.headers.host || '').toString();
+  const base = `${proto}://${host}`;
+  res.json({
+    ok: true,
+    protocol: 'http+sse',
+    protocolVersion: '2025-06-18',
+    endpoints: {
+      sse: `${base}/mcp/sse`,
+      messages: `${base}/mcp/messages`
+    }
+  });
 });
 app.post('/mcp', (req, res) => messagesHandler(req, res));
 
