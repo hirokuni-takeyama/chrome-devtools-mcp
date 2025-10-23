@@ -118,9 +118,34 @@ async function messagesHandler(req, res) {
 app.post('/mcp/messages', messagesHandler);
 app.post('/messages', messagesHandler);
 
+// --- MCP Discovery: Dify が参照する可能性大 ---
+app.get('/.well-known/mcp.json', (_req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id, mcp-protocol-version');
+  res.status(200).json({
+    name: 'chrome-devtools-mcp gateway',
+    version: '0.8.1',
+    transport: 'http+sse',
+    endpoints: { sse: '/mcp/sse', messages: '/mcp/messages' }
+  });
+});
+
+// --- /mcp 単一エンドポイント（GET=JSON or SSE, POST=JSON-RPC）---
+app.get('/mcp', (req, res) => {
+  const accept = String(req.headers['accept'] || '');
+  if (accept.includes('text/event-stream')) return sseHandler(req, res);
+  res.json({ ok: true, protocol: 'http+sse', endpoints: { sse: '/mcp/sse', messages: '/mcp/messages' } });
+});
+app.post('/mcp', (req, res) => messagesHandler(req, res));
+
 // ルート
 app.get('/', (_req, res) => res.json({ service: 'chrome-devtools-mcp gateway', ok: true }));
 
+// 末尾に追加：未定義ルートを捕捉（デバッグ用）
+app.use((req, res, _next) => {
+  console.warn('[404]', req.method, req.url);
+  res.status(404).json({ error: 'not_found' });
+});
+
 const port = process.env.PORT || 8080;
 app.listen(port, () => console.log('HTTP gateway listening on', port));
-
