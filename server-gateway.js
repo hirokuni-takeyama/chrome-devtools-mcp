@@ -124,10 +124,12 @@ app.get('/messages', (req, res) => res.json({ ok: true, note: 'GET accepted for 
 // ── JSON-RPC: /mcp/messages と /messages（POST）──────────────────────────
 async function messagesHandler(req, res) {
   const body = req.body || {};
-  const { id, method } = body;
+  const { id, method, params = {} } = body;
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('mcp-session-id', 'dummy-session');
   res.setHeader('mcp-protocol-version', '2025-06-18');
+
+  console.log('[MCP] request:', JSON.stringify(body));
 
   if (!method) {
     return res.status(400).json({
@@ -138,38 +140,32 @@ async function messagesHandler(req, res) {
   }
 
   if (method === 'initialize') {
-    try {
-      // Forward to child MCP for state sync, but ignore its response for Dify compatibility
-      await callMCP(body);
-    } catch (err) {
-      console.warn('[initialize passthrough warning]', err?.message || err);
-    }
-    return res.status(200).json({
+    return res.json({
       jsonrpc: '2.0',
       id,
       result: {
         protocolVersion: '2025-03-26',
         serverInfo: { name: 'chrome-devtools-mcp', version: '1.0.0' },
-        capabilities: {}
+        capabilities: {
+          tools: {},
+          resources: {},
+          prompts: {},
+          logging: {}
+        }
       }
     });
   }
 
   if (method === 'notifications/initialized') {
-    try {
-      await callMCP(body);
-    } catch (err) {
-      console.warn('[notifications passthrough warning]', err?.message || err);
-    }
-    return res.status(200).json({
+    return res.json({
       jsonrpc: '2.0',
-      method,
-      params: body.params ?? {}
+      method: 'notifications/initialized',
+      params: {}
     });
   }
 
   if (method === 'tools/list') {
-    return res.status(200).json({
+    return res.json({
       jsonrpc: '2.0',
       id,
       result: {
@@ -191,40 +187,52 @@ async function messagesHandler(req, res) {
   }
 
   if (method === 'resources/list') {
-    return res.status(200).json({ jsonrpc: '2.0', id, result: { resources: [] } });
+    return res.json({ jsonrpc: '2.0', id, result: { resources: [] } });
   }
 
   if (method === 'prompts/list') {
-    return res.status(200).json({ jsonrpc: '2.0', id, result: { prompts: [] } });
+    return res.json({ jsonrpc: '2.0', id, result: { prompts: [] } });
+  }
+
+  if (method === 'notifications/tools/list_changed') {
+    return res.json({
+      jsonrpc: '2.0',
+      method: 'notifications/tools/list_changed',
+      params: {}
+    });
   }
 
   if (method === 'tools/call') {
-    const { name, arguments: args } = body.params || {};
-    if (name === 'openTab') {
-      return res.status(200).json({
+    const toolName = params?.name;
+    const toolArgs = params?.arguments;
+    if (toolName === 'openTab') {
+      return res.json({
         jsonrpc: '2.0',
         id,
-        result: { ok: true, echo: { name, args } }
+        result: { ok: true, echo: { name: toolName, args: toolArgs } }
       });
     }
-    return res.status(200).json({
+    return res.json({
       jsonrpc: '2.0',
       id,
-      error: { code: -32601, message: `Unknown tool: ${name}` }
+      error: { code: -32601, message: `Unknown tool: ${toolName}` }
     });
   }
 
   try {
     const reply = await callMCP(body);
-    return res.status(200).json(reply);
-  } catch (e) {
-    console.error('[messages error]', e);
-    return res.status(200).json({
-      jsonrpc: '2.0',
-      id,
-      error: { code: -32601, message: `Unsupported method: ${method}` }
-    });
+    if (reply) {
+      return res.json(reply);
+    }
+  } catch (err) {
+    console.error('[messages error]', err);
   }
+
+  return res.json({
+    jsonrpc: '2.0',
+    id,
+    error: { code: -32601, message: `Unsupported method: ${method}` }
+  });
 }
 app.post('/mcp/messages', messagesHandler);
 app.post('/messages', messagesHandler);
