@@ -168,6 +168,26 @@ async function messagesHandler(req, res) {
     });
   }
 
+  if (method === 'tools/list') {
+    return res.status(200).json({ jsonrpc: '2.0', id, result: { tools: [] } });
+  }
+
+  if (method === 'resources/list') {
+    return res.status(200).json({ jsonrpc: '2.0', id, result: { resources: [] } });
+  }
+
+  if (method === 'prompts/list') {
+    return res.status(200).json({ jsonrpc: '2.0', id, result: { prompts: [] } });
+  }
+
+  if (method === 'tools/call') {
+    return res.status(200).json({
+      jsonrpc: '2.0',
+      id,
+      error: { code: -32601, message: 'tools/call is not implemented' }
+    });
+  }
+
   try {
     const reply = await callMCP(body);
     return res.status(200).json(reply);
