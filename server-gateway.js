@@ -13,13 +13,31 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 
 const sseClients = new Set();
+let sseEventId = 1;
 
-function sseNotify(payload) {
+function sseWrite(res, eventName, data) {
+  if (eventName) res.write(`event: ${eventName}\n`);
+  res.write(`id: ${sseEventId++}\n`);
+  res.write(`data: ${data}\n\n`);
+}
+
+function sseBroadcast(eventName, payload) {
   const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
   for (const client of sseClients) {
-    client.write('event: message\n');
-    client.write(`data: ${data}\n\n`);
+    sseWrite(client, eventName, data);
   }
+}
+
+function sseSendRpcResult(id, result) {
+  sseBroadcast('message', { jsonrpc: '2.0', id, result });
+}
+
+function sseSendRpcError(id, error) {
+  sseBroadcast('message', { jsonrpc: '2.0', id, error });
+}
+
+function sseNotify(method, params = {}) {
+  sseBroadcast('message', { jsonrpc: '2.0', method, params });
 }
 app.use((req, res, next) => {
   const origin = ORIGIN;
@@ -108,9 +126,8 @@ function createSSEHandler(messagePath) {
 
     res.flushHeaders?.();
 
-    // Dify が期待する初回通知
-    res.write('event: endpoint\n');
-    res.write(`data: ${absoluteMessages}\n\n`);
+    // Dify が期待する初回通知（プレーンURL）
+    sseWrite(res, 'endpoint', absoluteMessages);
 
     sseClients.add(res);
 
@@ -145,113 +162,110 @@ async function messagesHandler(req, res) {
   console.log('[MCP] request:', JSON.stringify(body));
 
   if (!method) {
-    return res.status(400).json({
+    res.status(400).json({
       jsonrpc: '2.0',
       id: id ?? null,
       error: { code: -32600, message: 'Invalid Request: method is required' }
     });
+    setImmediate(() => sseSendRpcError(id ?? null, { code: -32600, message: 'Invalid Request: method is required' }));
+    return;
   }
 
   if (method === 'initialize') {
-    res.json({
-      jsonrpc: '2.0',
-      id,
-      result: {
-        protocolVersion: '2025-03-26',
-        serverInfo: { name: 'chrome-devtools-mcp', version: '1.0.0' },
-        capabilities: {
-          tools: {},
-          resources: {},
-          prompts: {},
-          logging: {}
-        }
+    const result = {
+      protocolVersion: '2025-03-26',
+      serverInfo: { name: 'chrome-devtools-mcp', version: '1.0.0' },
+      capabilities: {
+        tools: { listChanged: true },
+        resources: { listChanged: false, subscribe: false },
+        prompts: { listChanged: false },
+        logging: {}
       }
-    });
-    setImmediate(() => {
-      sseNotify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
-      sseNotify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed', params: {} });
-      sseNotify({ jsonrpc: '2.0', method: 'notifications/roots/list_changed', params: {} });
-    });
+    };
+    res.json({ jsonrpc: '2.0', id, result });
+    setImmediate(() => sseSendRpcResult(id, result));
     return;
   }
 
   if (method === 'notifications/initialized') {
-    return res.json({
-      jsonrpc: '2.0',
-      method: 'notifications/initialized',
-      params: {}
-    });
+    res.sendStatus(202);
+    setImmediate(() => sseNotify('notifications/tools/list_changed'));
+    return;
   }
 
   if (method === 'tools/list') {
-    return res.json({
-      jsonrpc: '2.0',
-      id,
-      result: {
-        tools: [
-          {
-            name: 'openTab',
-            description: 'Open a URL in Chrome DevTools-controlled browser.',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                url: { type: 'string', description: 'URL to open' }
-              },
-              required: ['url']
-            }
+    const result = {
+      tools: [
+        {
+          name: 'openTab',
+          description: 'Open a URL in Chrome DevTools-controlled browser.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              url: { type: 'string', description: 'URL to open' }
+            },
+            required: ['url']
           }
-        ]
-      }
-    });
+        }
+      ]
+    };
+    res.json({ jsonrpc: '2.0', id, result });
+    setImmediate(() => sseSendRpcResult(id, result));
+    return;
   }
 
   if (method === 'resources/list') {
-    return res.json({ jsonrpc: '2.0', id, result: { resources: [] } });
+    const result = { resources: [] };
+    res.json({ jsonrpc: '2.0', id, result });
+    setImmediate(() => sseSendRpcResult(id, result));
+    return;
   }
 
   if (method === 'prompts/list') {
-    return res.json({ jsonrpc: '2.0', id, result: { prompts: [] } });
+    const result = { prompts: [] };
+    res.json({ jsonrpc: '2.0', id, result });
+    setImmediate(() => sseSendRpcResult(id, result));
+    return;
   }
 
   if (method === 'notifications/tools/list_changed') {
-    return res.json({
-      jsonrpc: '2.0',
-      method: 'notifications/tools/list_changed',
-      params: {}
-    });
+    res.sendStatus(202);
+    return;
   }
 
   if (method === 'tools/call') {
     const toolName = params?.name;
     const toolArgs = params?.arguments;
     if (toolName === 'openTab') {
-      return res.json({
-        jsonrpc: '2.0',
-        id,
-        result: { ok: true, echo: { name: toolName, args: toolArgs } }
-      });
+      const result = { ok: true, echo: { name: toolName, args: toolArgs } };
+      res.json({ jsonrpc: '2.0', id, result });
+      setImmediate(() => sseSendRpcResult(id, result));
+      return;
     }
-    return res.json({
-      jsonrpc: '2.0',
-      id,
-      error: { code: -32601, message: `Unknown tool: ${toolName}` }
-    });
+    const error = { code: -32601, message: `Unknown tool: ${toolName}` };
+    res.json({ jsonrpc: '2.0', id, error });
+    setImmediate(() => sseSendRpcError(id, error));
+    return;
   }
 
   try {
     const reply = await callMCP(body);
     if (reply) {
-      return res.json(reply);
+      res.json(reply);
+      if (reply.result !== undefined) {
+        setImmediate(() => sseSendRpcResult(reply.id ?? id, reply.result));
+      } else if (reply.error !== undefined) {
+        setImmediate(() => sseSendRpcError(reply.id ?? id, reply.error));
+      }
+      return;
     }
   } catch (err) {
     console.error('[messages error]', err);
   }
 
-  return res.json({
-    jsonrpc: '2.0',
-    id,
-    error: { code: -32601, message: `Unsupported method: ${method}` }
-  });
+  const error = { code: -32601, message: `Unsupported method: ${method}` };
+  res.json({ jsonrpc: '2.0', id, error });
+  setImmediate(() => sseSendRpcError(id, error));
 }
 app.post('/mcp/messages', messagesHandler);
 app.post('/messages', messagesHandler);
