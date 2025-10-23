@@ -116,46 +116,48 @@ app.post('/messages', messagesHandler);
 
 // --- MCP Discovery: Dify が参照する可能性大 ---
 app.get('/.well-known/mcp.json', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Expose-Headers', 'mcp-session-id, mcp-protocol-version');
+  res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'application/json');
-  // ベースURLを組み立て（Cloud Run: x-forwarded-proto/host を優先）
   const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString();
   const host = (req.headers['x-forwarded-host'] || req.headers.host || '').toString();
   const base = `${proto}://${host}`;
-
+  const sse = `${base}/mcp/sse`;
+  const msgs = `${base}/mcp/messages`;
+  const single = `${base}/mcp`;
   const payload = {
     name: 'chrome-devtools-mcp gateway',
     version: '0.8.1',
-    // 互換のため冗長に複数の表現を併記（相手実装に合わせてどれか拾われる）
-    transport: 'http+sse',
+    description: 'HTTP<->stdio gateway for chrome-devtools-mcp',
     protocolVersion: '2025-06-18',
-    // 旧来表現
-    endpoints: {
-      sse: '/mcp/sse',
-      messages: '/mcp/messages',
-      single: '/mcp'
-    },
-    // 絶対URL（これを見れば確実に叩ける）
-    routes: {
-      sse: `${base}/mcp/sse`,
-      messages: `${base}/mcp/messages`,
-      single: `${base}/mcp`
-    },
-    // 配列形式（将来/他実装向け）
+    transport: 'http+sse',
+    endpointUrl: single,
+    sseUrl: sse,
+    messagesUrl: msgs,
+    endpoints: { sse: '/mcp/sse', messages: '/mcp/messages', single: '/mcp' },
+    routes: { sse, messages: msgs, single },
+    http: { type: 'http+sse', sse, messages: msgs, single },
+    mcp: { http: { sse, messages: msgs, single } },
     protocols: [
       {
         type: 'http+sse',
         protocolVersion: '2025-06-18',
-        baseUrl: `${base}`,
-        endpoints: {
-          sse: `${base}/mcp/sse`,
-          messages: `${base}/mcp/messages`,
-          single: `${base}/mcp`
-        }
+        baseUrl: base,
+        endpoints: { sse, messages: msgs, single }
       }
     ]
   };
-
   res.status(200).json(payload);
+});
+
+app.get('/mcp/manifest', (req, res) => {
+  req.url = '/.well-known/mcp.json';
+  app._router.handle(req, res);
+});
+app.get('/mcp/config', (req, res) => {
+  req.url = '/.well-known/mcp.json';
+  app._router.handle(req, res);
 });
 
 // --- /mcp 単一エンドポイント（GET=JSON or SSE, POST=JSON-RPC）---
@@ -169,10 +171,10 @@ app.get('/mcp', (req, res) => {
     ok: true,
     protocol: 'http+sse',
     protocolVersion: '2025-06-18',
-    endpoints: {
-      sse: `${base}/mcp/sse`,
-      messages: `${base}/mcp/messages`
-    }
+    endpointUrl: `${base}/mcp`,
+    sseUrl: `${base}/mcp/sse`,
+    messagesUrl: `${base}/mcp/messages`,
+    endpoints: { sse: `${base}/mcp/sse`, messages: `${base}/mcp/messages` }
   });
 });
 app.post('/mcp', (req, res) => messagesHandler(req, res));
