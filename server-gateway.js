@@ -76,22 +76,46 @@ function callMCP(json) {
   });
 }
 
-// ── SSE: /mcp/sse と /sse（両対応）─────────────────────────────────────────
-function sseHandler(req, res) {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  // 初回セッションは寛容運用（ヘッダ不要）。形式上ヘッダを露出できるようにダミー値を付与。
-  res.setHeader('mcp-session-id', 'dummy-session');
-  res.setHeader('mcp-protocol-version', '2025-06-18');
-  res.flushHeaders?.();
-  res.write(':\n\n'); // 初回フラッシュ
-
-  const hb = setInterval(() => { res.write(':\n\n'); }, HEARTBEAT_MS);
-  req.on('close', () => { clearInterval(hb); res.end(); });
+function buildBaseUrl(req) {
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString();
+  const hostHeader = (req.headers['x-forwarded-host'] || req.headers.host || '').toString();
+  if (!hostHeader) return `${proto}://localhost`;
+  return `${proto}://${hostHeader}`;
 }
-app.get('/mcp/sse', sseHandler);
-app.get('/sse', sseHandler);
+
+function createSSEHandler(messagePath) {
+  return (req, res) => {
+    const baseUrl = buildBaseUrl(req);
+    const absoluteMessages = messagePath.startsWith('http') ? messagePath : `${baseUrl}${messagePath}`;
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Content-Encoding', 'identity');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.setHeader('mcp-session-id', 'dummy-session');
+    res.setHeader('mcp-protocol-version', '2025-06-18');
+
+    res.flushHeaders?.();
+
+    // Dify が期待する初回通知
+    res.write('event: endpoint\n');
+    res.write(`data: ${absoluteMessages}\n\n`);
+
+    const hb = setInterval(() => {
+      res.write(`: ping\n\n`);
+    }, HEARTBEAT_MS);
+
+    req.on('close', () => {
+      clearInterval(hb);
+      res.end();
+    });
+  };
+}
+const mcpSseHandler = createSSEHandler('/mcp/messages');
+const legacySseHandler = createSSEHandler('/messages');
+app.get('/mcp/sse', mcpSseHandler);
+app.get('/sse', legacySseHandler);
 
 // GET /messages をヘルスOKに（Difyの探り対策）
 app.get('/mcp/messages', (req, res) => res.json({ ok: true, note: 'GET accepted for health' }));
@@ -99,16 +123,61 @@ app.get('/messages', (req, res) => res.json({ ok: true, note: 'GET accepted for 
 
 // ── JSON-RPC: /mcp/messages と /messages（POST）──────────────────────────
 async function messagesHandler(req, res) {
+  const body = req.body || {};
+  const { id, method } = body;
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('mcp-session-id', 'dummy-session');
+  res.setHeader('mcp-protocol-version', '2025-06-18');
+
+  if (!method) {
+    return res.status(400).json({
+      jsonrpc: '2.0',
+      id: id ?? null,
+      error: { code: -32600, message: 'Invalid Request: method is required' }
+    });
+  }
+
+  if (method === 'initialize') {
+    try {
+      // Forward to child MCP for state sync, but ignore its response for Dify compatibility
+      await callMCP(body);
+    } catch (err) {
+      console.warn('[initialize passthrough warning]', err?.message || err);
+    }
+    return res.status(200).json({
+      jsonrpc: '2.0',
+      id,
+      result: {
+        protocolVersion: '2025-03-26',
+        serverInfo: { name: 'chrome-devtools-mcp', version: '1.0.0' },
+        capabilities: {}
+      }
+    });
+  }
+
+  if (method === 'notifications/initialized') {
+    try {
+      await callMCP(body);
+    } catch (err) {
+      console.warn('[notifications passthrough warning]', err?.message || err);
+    }
+    return res.status(200).json({
+      jsonrpc: '2.0',
+      method,
+      params: body.params ?? {}
+    });
+  }
+
   try {
-    const body = req.body || {};
     const reply = await callMCP(body);
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('mcp-session-id', 'dummy-session');
-    res.setHeader('mcp-protocol-version', '2025-06-18');
-    res.status(200).json(reply);
+    return res.status(200).json(reply);
   } catch (e) {
     console.error('[messages error]', e);
-    res.status(502).json({ error: 'gateway_error', detail: String(e?.message || e) });
+    return res.status(200).json({
+      jsonrpc: '2.0',
+      id,
+      error: { code: -32601, message: `Unsupported method: ${method}` }
+    });
   }
 }
 app.post('/mcp/messages', messagesHandler);
@@ -192,7 +261,7 @@ app.get('/', (req, res) => {
   const sse = `${base}/mcp/sse`;
   res.setHeader('X-MCP-Endpoint', sse);
   res.setHeader('Cache-Control', 'no-store');
-  if (accept.includes('text/event-stream')) return sseHandler(req, res);
+  if (accept.includes('text/event-stream')) return mcpSseHandler(req, res);
   return res.redirect(308, '/mcp/sse');
 });
 
