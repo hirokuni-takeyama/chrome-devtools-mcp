@@ -39,7 +39,9 @@
   "mcpName": "io.github.ChromeDevTools/chrome-devtools-mcp",
   "dependencies": {
     "core-js": "3.46.0",
+    "cors": "^2.8.5",
     "debug": "4.4.3",
+    "express": "^5.1.0",
     "yargs": "18.0.0"
   },
   "devDependencies": {

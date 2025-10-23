@@ -21,9 +21,12 @@ ENV PATH="/opt/venv/bin:${PATH}"
 RUN npm i -g chrome-devtools-mcp@latest
 
 WORKDIR /app
+COPY package*.json /app/
+RUN npm ci --omit=dev && npm cache clean --force
+COPY server-gateway.js /app/server-gateway.js
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 ENV PORT=8080
 EXPOSE 8080
-CMD ["/app/start.sh"]
+CMD ["node", "server-gateway.js"]
