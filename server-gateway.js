@@ -213,4 +213,7 @@ app.use((req, res, _next) => {
 });
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => console.log('HTTP gateway listening on', port));
+app.listen(port, () => {
+  console.log('HTTP gateway listening on', port);
+  console.log('Health: /  | Discovery: /.well-known/mcp.json  | SSE: /sse, /mcp/sse  | JSON-RPC: /messages, /mcp/messages');
+});
