@@ -11,6 +11,16 @@ const CHILD_ARGS = (process.env.MCP_ARGS && process.env.MCP_ARGS.split(' ')) || 
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
+
+const sseClients = new Set();
+
+function sseNotify(payload) {
+  const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  for (const client of sseClients) {
+    client.write('event: message\n');
+    client.write(`data: ${data}\n\n`);
+  }
+}
 app.use((req, res, next) => {
   const origin = ORIGIN;
   res.header('Access-Control-Allow-Origin', origin);
@@ -102,12 +112,15 @@ function createSSEHandler(messagePath) {
     res.write('event: endpoint\n');
     res.write(`data: ${absoluteMessages}\n\n`);
 
+    sseClients.add(res);
+
     const hb = setInterval(() => {
       res.write(`: ping\n\n`);
     }, HEARTBEAT_MS);
 
     req.on('close', () => {
       clearInterval(hb);
+      sseClients.delete(res);
       res.end();
     });
   };
@@ -140,7 +153,7 @@ async function messagesHandler(req, res) {
   }
 
   if (method === 'initialize') {
-    return res.json({
+    res.json({
       jsonrpc: '2.0',
       id,
       result: {
@@ -154,6 +167,12 @@ async function messagesHandler(req, res) {
         }
       }
     });
+    setImmediate(() => {
+      sseNotify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
+      sseNotify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed', params: {} });
+      sseNotify({ jsonrpc: '2.0', method: 'notifications/roots/list_changed', params: {} });
+    });
+    return;
   }
 
   if (method === 'notifications/initialized') {
