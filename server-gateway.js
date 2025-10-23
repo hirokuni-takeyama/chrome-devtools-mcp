@@ -183,15 +183,17 @@ app.get('/mcp', (req, res) => {
 });
 app.post('/mcp', (req, res) => messagesHandler(req, res));
 
-// ベースURL: text/plain で「SSEの絶対URL」を返す（最も確実）
+// ベースURL: まずは /mcp/sse へ恒久リダイレクト（Dify が待ち続けるパスを強制的にSSEへ）
 app.get('/', (req, res) => {
+  const accept = String(req.headers['accept'] || '');
   const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').toString();
   const host = (req.headers['x-forwarded-host'] || req.headers.host || '').toString();
   const base = `${proto}://${host}`;
   const sse = `${base}/mcp/sse`;
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('X-MCP-Endpoint', sse);
   res.setHeader('Cache-Control', 'no-store');
-  res.status(200).send(sse + '\n');
+  if (accept.includes('text/event-stream')) return sseHandler(req, res);
+  return res.redirect(308, '/mcp/sse');
 });
 
 // JSON 表現でのエンドポイント提示
