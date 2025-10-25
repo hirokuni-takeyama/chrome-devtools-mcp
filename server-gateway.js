@@ -76,9 +76,8 @@ child.stdout.on('data', (chunk) => {
       pending.get(msg.id).resolve(msg);
       pending.delete(msg.id);
     } else {
-      // 通知などはSSEへ将来配信したければここでキューイング
-      // 今回は接続テスト重視なのでログのみ
-      console.log('[MCP NOTIFY]', JSON.stringify(msg));
+      // 通知（idなし）は SSE へ中継
+      sseBroadcast('message', msg);
     }
   }
 });
@@ -172,18 +171,11 @@ async function messagesHandler(req, res) {
   }
 
   if (method === 'initialize') {
-    const result = {
-      protocolVersion: '2025-03-26',
-      serverInfo: { name: 'chrome-devtools-mcp', version: '1.0.0' },
-      capabilities: {
-        tools: { listChanged: true },
-        resources: { listChanged: false, subscribe: false },
-        prompts: { listChanged: false },
-        logging: {}
-      }
-    };
-    res.json({ jsonrpc: '2.0', id, result });
-    setImmediate(() => sseSendRpcResult(id, result));
+    // initialize は子MCPにフォワード
+    const reply = await callMCP(body);
+    res.json(reply);
+    if (reply.result !== undefined) setImmediate(() => sseSendRpcResult(reply.id ?? id, reply.result));
+    else if (reply.error !== undefined) setImmediate(() => sseSendRpcError(reply.id ?? id, reply.error));
     return;
   }
 
@@ -194,23 +186,11 @@ async function messagesHandler(req, res) {
   }
 
   if (method === 'tools/list') {
-    const result = {
-      tools: [
-        {
-          name: 'openTab',
-          description: 'Open a URL in Chrome DevTools-controlled browser.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              url: { type: 'string', description: 'URL to open' }
-            },
-            required: ['url']
-          }
-        }
-      ]
-    };
-    res.json({ jsonrpc: '2.0', id, result });
-    setImmediate(() => sseSendRpcResult(id, result));
+    // tools/list を子MCPにフォワード
+    const reply = await callMCP(body);
+    res.json(reply);
+    if (reply.result !== undefined) setImmediate(() => sseSendRpcResult(reply.id ?? id, reply.result));
+    else if (reply.error !== undefined) setImmediate(() => sseSendRpcError(reply.id ?? id, reply.error));
     return;
   }
 
@@ -237,14 +217,17 @@ async function messagesHandler(req, res) {
     const toolName = params?.name;
     const toolArgs = params?.arguments;
     if (toolName === 'openTab') {
+      // ゲートウェイ独自の簡易openTab
       const result = { ok: true, echo: { name: toolName, args: toolArgs } };
       res.json({ jsonrpc: '2.0', id, result });
       setImmediate(() => sseSendRpcResult(id, result));
       return;
     }
-    const error = { code: -32601, message: `Unknown tool: ${toolName}` };
-    res.json({ jsonrpc: '2.0', id, error });
-    setImmediate(() => sseSendRpcError(id, error));
+    // それ以外は子MCPへフォワード
+    const reply = await callMCP(body);
+    res.json(reply);
+    if (reply.result !== undefined) setImmediate(() => sseSendRpcResult(reply.id ?? id, reply.result));
+    else if (reply.error !== undefined) setImmediate(() => sseSendRpcError(reply.id ?? id, reply.error));
     return;
   }
 
